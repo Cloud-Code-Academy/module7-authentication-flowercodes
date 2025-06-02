@@ -3,16 +3,15 @@
  * STUDENT VERSION - Complete the method implementations
  */
 public class SFAuthenticationManager {
-	// Endpoint for token requests
 	private static final String TOKEN_ENDPOINT = '/services/oauth2/token';
 	private static final String AUTHORIZE_ENDPOINT = '/services/oauth2/authorize';
 	private static final String PKCE_GENERATOR_ENDPOINT = '/services/oauth2/pkce/generator';
 
 	// Configuration values
-	public static final String DEFAULT_CLIENT_ID = 'DUMMY_CLIENT_ID_FOR_STUDENT_LEARNING';
-	public static final String DEFAULT_CLIENT_SECRET = 'DUMMY_CLIENT_SECRET_FOR_STUDENT_LEARNING';
-	public static final String DEFAULT_LOGIN_URL = 'https://student-org.my.salesforce.com';
-	public static final String DEFAULT_REDIRECT_URL = 'https://student-org.my.site.com/callback';
+	public static final String DEFAULT_CLIENT_ID = 'fakeclientid';
+	public static final String DEFAULT_CLIENT_SECRET = 'fakeclientsecret';
+	public static final String DEFAULT_LOGIN_URL = 'https://resourceful-wolf-s9a1a-dev-ed.trailblaze.my.salesforce.com';
+	public static final String DEFAULT_REDIRECT_URL = 'https://playful-narwhal-eu8yy0-dev-ed.trailblaze.my.site.com/callback';
 
 	/**
 	 * Central method to make OAuth token requests
@@ -23,16 +22,58 @@ public class SFAuthenticationManager {
 	 */
 	private static AuthResponse makeTokenRequest(Map<String, String> params, String tokenUrl) {
 		// TODO: Create HTTP request
+		HttpRequest request = new HttpRequest();
+		Http http = new Http();
 		// TODO: Set endpoint, method, and headers
+		request.setEndpoint(tokenUrl);
+		request.setMethod('POST');
+		request.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+		request.setHeader('Accept', 'application/json');
 		// TODO: Convert parameters to URL encoded string
+		List<String> paramList = new List<String>();
+		for (String key : params.keySet()) {
+			String encodedKey = EncodingUtil.urlEncode(key, 'UTF-8');
+			String encodedValue = EncodingUtil.urlEncode(params.get(key), 'UTF-8');
+			paramList.add(encodedKey + '=' + encodedValue);
+		}
+		String requestBody = String.join(paramList, '&');
 		// TODO: Set request body
+		request.setBody(requestBody);
 		// TODO: Send the request and handle response
-		// TODO: Parse success and error responses
+		HttpResponse response;
+		try {
+			response = http.send(request);
+		} catch (Exception e) {
+			// Handle exceptions
+			AuthResponse authResponse = new AuthResponse();
+			authResponse.isSuccess = false;
+			authResponse.errorMessage = 'Exception during token request: ' + e.getMessage();
+			return authResponse;
+		}
 
-		// STUB: Return empty response for now
+		// TODO: Parse success and error responses
 		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
+		if (response.getStatusCode() == 200) {
+			// Parse successful response
+			Map<String, Object> responseMap = (Map<String, Object>) JSON.deserializeUntyped(
+				response.getBody()
+			);
+			authResponse.isSuccess = true;
+			authResponse.accessToken = (String) responseMap.get('access_token');
+			authResponse.refreshToken = (String) responseMap.get('refresh_token');
+			authResponse.instanceUrl = (String) responseMap.get('instance_url');
+			authResponse.tokenType = (String) responseMap.get('token_type');
+			authResponse.expiresIn = (Integer) responseMap.get('expires_in');
+		} else {
+			// Parse error response
+			Map<String, Object> errorMap = (Map<String, Object>) JSON.deserializeUntyped(
+				response.getBody()
+			);
+			authResponse.isSuccess = false;
+			authResponse.errorMessage = (String) errorMap.get('error_description');
+			authResponse.errorDetails = (String) errorMap.get('error');
+		}
+
 		return authResponse;
 	}
 
@@ -55,13 +96,18 @@ public class SFAuthenticationManager {
 		// - client_secret: DEFAULT_CLIENT_SECRET
 		// - username: username
 		// - password: password + securityToken
+		Map<String, String> params = new Map<String, String>{
+			'grant_type' => 'password',
+			'client_id' => DEFAULT_CLIENT_ID,
+			'client_secret' => DEFAULT_CLIENT_SECRET,
+			'username' => username,
+			'password' => password + securityToken
+		};
 
 		// TODO: Call makeTokenRequest with params and token URL
+		String tokenUrl = DEFAULT_LOGIN_URL + TOKEN_ENDPOINT;
+		AuthResponse authResponse = SFAuthenticationManager.makeTokenRequest(params, tokenUrl);
 
-		// STUB: Return empty response for now
-		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
 		return authResponse;
 	}
 
@@ -72,16 +118,16 @@ public class SFAuthenticationManager {
 	 */
 	public static AuthResponse authenticateWithClientCredentials() {
 		// TODO: Prepare parameters map with:
-		// - grant_type: 'client_credentials'
-		// - client_id: DEFAULT_CLIENT_ID
-		// - client_secret: DEFAULT_CLIENT_SECRET
+		Map<String, String> params = new Map<String, String>{
+			'grant_type' => 'client_credentials',
+			'client_id' => DEFAULT_CLIENT_ID,
+			'client_secret' => DEFAULT_CLIENT_SECRET
+		};
 
 		// TODO: Call makeTokenRequest with params and token URL
+		String tokenUrl = DEFAULT_LOGIN_URL + TOKEN_ENDPOINT;
+		AuthResponse authResponse = SFAuthenticationManager.makeTokenRequest(params, tokenUrl);
 
-		// STUB: Return empty response for now
-		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
 		return authResponse;
 	}
 
@@ -98,10 +144,28 @@ public class SFAuthenticationManager {
 		// TODO: Get the compact serialization (token string)
 		// TODO: Create JWTBearerTokenExchange and get access token
 
-		// STUB: Return empty response for now
+		Auth.JWT jwt = new Auth.JWT();
+		jwt.setSub(username);
+		jwt.setAud('https://login.salesforce.com');
+		jwt.setIss(DEFAULT_CLIENT_ID);
+
+		Auth.JWS jws = new Auth.JWS(jwt, 'jwtsource');
+		String token = jws.getCompactSerialization();
+		String tokenEndpoint = DEFAULT_LOGIN_URL + '/services/oauth2/token';
+		Auth.JWTBearerTokenExchange bearer = new Auth.JWTBearerTokenExchange(tokenEndpoint, jws);
+		String accessToken = bearer.getAccessToken();
+		if (String.isBlank(accessToken)) {
+			AuthResponse authResponse = new AuthResponse();
+			authResponse.isSuccess = false;
+			authResponse.errorMessage = 'Failed to obtain access token using JWT';
+			return authResponse;
+		}
+
+		// Return AuthResponse with token details
 		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
+		authResponse.accessToken = accessToken;
+		authResponse.isSuccess = true;
+		authResponse.instanceUrl = DEFAULT_LOGIN_URL; // Assuming instance URL is the same as login URL
 		return authResponse;
 	}
 
@@ -119,9 +183,18 @@ public class SFAuthenticationManager {
 		// - redirect_uri parameter (URL encoded)
 		// - response_type=code
 		// - state parameter if provided (URL encoded)
+		String baseUrl = DEFAULT_LOGIN_URL + AUTHORIZE_ENDPOINT;
+		String urlBuilder;
+		urlBuilder = baseUrl + '?';
+		urlBuilder += 'client_id=' + EncodingUtil.urlEncode(DEFAULT_CLIENT_ID, 'UTF-8');
+		urlBuilder += '&redirect_uri=' + EncodingUtil.urlEncode(DEFAULT_REDIRECT_URL, 'UTF-8');
+		urlBuilder += '&response_type=code';
+		if (!String.isBlank(state)) {
+			urlBuilder += '&state=' + EncodingUtil.urlEncode(state, 'UTF-8');
+		}
 
 		// STUB: Return placeholder URL for now
-		return 'URL_NOT_IMPLEMENTED_YET';
+		return urlBuilder;
 	}
 
 	/**
@@ -135,11 +208,35 @@ public class SFAuthenticationManager {
 		// TODO: Set method to GET and content-type header
 		// TODO: Send request and handle response
 		// TODO: Parse response for code_verifier, code_challenge, and code_challenge_method
+		HttpRequest request = new HttpRequest();
+		Http http = new Http();
+		String pkceUrl = DEFAULT_LOGIN_URL + PKCE_GENERATOR_ENDPOINT;
+		request.setEndpoint(pkceUrl);
+		request.setMethod('GET');
+		request.setHeader('Content-Type', 'application/json');
+		HttpResponse response;
+		try {
+			response = http.send(request);
+		} catch (Exception e) {
+			PkceResponse pkceResponse = new PkceResponse();
+			pkceResponse.isSuccess = false;
+			pkceResponse.errorMessage = 'Exception during PKCE request: ' + e.getMessage();
+			return pkceResponse;
+		}
 
-		// STUB: Return empty response for now
 		PkceResponse pkceResponse = new PkceResponse();
-		pkceResponse.isSuccess = false;
-		pkceResponse.errorMessage = 'Method not implemented yet';
+		if (response.getStatusCode() == 200) {
+			Map<String, Object> responseMap = (Map<String, Object>) JSON.deserializeUntyped(
+				response.getBody()
+			);
+			pkceResponse.isSuccess = true;
+			pkceResponse.codeVerifier = (String) responseMap.get('code_verifier');
+			pkceResponse.codeChallenge = (String) responseMap.get('code_challenge');
+			pkceResponse.codeChallengeMethod = (String) responseMap.get('code_challenge_method');
+		} else {
+			pkceResponse.isSuccess = false;
+			pkceResponse.errorMessage = 'Failed to generate PKCE data: ' + response.getStatus();
+		}
 		return pkceResponse;
 	}
 
@@ -161,9 +258,19 @@ public class SFAuthenticationManager {
 		// TODO: Add PKCE parameters if usePkce is true:
 		// - code_challenge (URL encoded)
 		// - code_challenge_method (URL encoded)
+		String baseUrl = DEFAULT_LOGIN_URL + AUTHORIZE_ENDPOINT;
+		String urlBuilder = baseUrl + '?';
+		urlBuilder += 'client_id=' + EncodingUtil.urlEncode(DEFAULT_CLIENT_ID, 'UTF-8');
+		urlBuilder += '&redirect_uri=' + EncodingUtil.urlEncode(DEFAULT_REDIRECT_URL, 'UTF-8');
+		urlBuilder += '&response_type=code';
+		if (usePkce) {
+			urlBuilder += '&code_challenge=' + EncodingUtil.urlEncode(codeChallenge, 'UTF-8');
+			urlBuilder +=
+				'&code_challenge_method=' + EncodingUtil.urlEncode(codeChallengeMethod, 'UTF-8');
+		}
 
 		// STUB: Return placeholder URL for now
-		return 'URL_NOT_IMPLEMENTED_YET';
+		return urlBuilder;
 	}
 
 	/**
@@ -180,13 +287,21 @@ public class SFAuthenticationManager {
 		// - client_id: DEFAULT_CLIENT_ID
 		// - client_secret: DEFAULT_CLIENT_SECRET
 		// - redirect_uri: DEFAULT_REDIRECT_URL
+		Map<String, String> params = new Map<String, String>{
+			'grant_type' => 'authorization_code',
+			'code' => code,
+			'client_id' => DEFAULT_CLIENT_ID,
+			'client_secret' => DEFAULT_CLIENT_SECRET,
+			'redirect_uri' => DEFAULT_REDIRECT_URL
+		};
 
 		// TODO: Call makeTokenRequest with params and token URL
+		String tokenUrl = DEFAULT_LOGIN_URL + TOKEN_ENDPOINT;
+		AuthResponse authResponse = SFAuthenticationManager.makeTokenRequest(params, tokenUrl);
 
-		// STUB: Return empty response for now
-		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
+		if (!authResponse.isSuccess) {
+			System.debug('Error exchanging code for token: ' + authResponse.errorMessage);
+		}
 		return authResponse;
 	}
 
@@ -202,11 +317,21 @@ public class SFAuthenticationManager {
 		// TODO: Prepare parameters map like exchangeCodeForToken
 		// TODO: Add code_verifier parameter if provided
 		// TODO: Call makeTokenRequest with params and token URL
-
-		// STUB: Return empty response for now
-		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
+		Map<String, String> params = new Map<String, String>{
+			'grant_type' => 'authorization_code',
+			'code' => code,
+			'client_id' => DEFAULT_CLIENT_ID,
+			'client_secret' => DEFAULT_CLIENT_SECRET,
+			'redirect_uri' => DEFAULT_REDIRECT_URL
+		};
+		if (!String.isBlank(codeVerifier)) {
+			params.put('code_verifier', codeVerifier);
+		}
+		String tokenUrl = DEFAULT_LOGIN_URL + TOKEN_ENDPOINT;
+		AuthResponse authResponse = SFAuthenticationManager.makeTokenRequest(params, tokenUrl);
+		if (!authResponse.isSuccess) {
+			System.debug('Error exchanging code for token with PKCE: ' + authResponse.errorMessage);
+		}
 		return authResponse;
 	}
 
@@ -223,13 +348,16 @@ public class SFAuthenticationManager {
 		// - refresh_token: refreshToken
 		// - client_id: DEFAULT_CLIENT_ID
 		// - client_secret: DEFAULT_CLIENT_SECRET
+		Map<String, String> params = new Map<String, String>{
+			'grant_type' => 'refresh_token',
+			'refresh_token' => refreshToken,
+			'client_id' => DEFAULT_CLIENT_ID,
+			'client_secret' => DEFAULT_CLIENT_SECRET
+		};
+		String tokenUrl = DEFAULT_LOGIN_URL + TOKEN_ENDPOINT;
 
 		// TODO: Call makeTokenRequest with params and token URL
-
-		// STUB: Return empty response for now
-		AuthResponse authResponse = new AuthResponse();
-		authResponse.isSuccess = false;
-		authResponse.errorMessage = 'Method not implemented yet';
+		AuthResponse authResponse = SFAuthenticationManager.makeTokenRequest(params, tokenUrl);
 		return authResponse;
 	}
 
